@@ -37,7 +37,11 @@ io.sockets.on('connection', function (socket) {
   socket.on('message', function (message) {
     log('Receive message: ', message);
     // for a real app, would be room-only (not broadcast)
-    socket.broadcast.emit('message', message);
+    if(message.peerId) {
+      socket.to(message.peerId).emit('message', {message: message.message, id: socket.id});
+    }else {
+      socket.broadcast.emit('message', {message: message, id: socket.id});
+    }
     if(message.type === 'bye') {
       console.log('received bye');
       io.sockets.in(message.room).clients(function (error, clients) {
@@ -65,16 +69,17 @@ io.sockets.on('connection', function (socket) {
       log('Client ID ' + socket.id + ' created room ' + room);
       socket.emit('created', room, socket.id);
 
-    } else if (numClients === 1) {
+    } else if (numClients > 0) {
       log('Client ID ' + socket.id + ' joined room ' + room);
-      io.sockets.in(room).emit('join', room);
+      io.sockets.in(room).emit('join', { room: room, id: socket.id });
       socket.join(room);
       // console.log(io.sockets.adapter.rooms);
       socket.emit('joined', room, socket.id);
       io.sockets.in(room).emit('ready');
-    } else { // max two clients
-      socket.emit('full', room);
     }
+    // } else { // max two clients
+    //   socket.emit('full', room);
+    // }
   });
 
   socket.on('ipaddr', function () {
@@ -98,10 +103,10 @@ io.sockets.on('connection', function (socket) {
 
 // Emit Type:
 // - log
-// - message (broadcast) => message cho tat ca cac room
+// - message (broadcast) => message cho tat ca client tru send
 // - created (=> id) thong bao cho client truc tiep
-// - join (=> in room) thong bao ca room
+// - join (=> in room) thong bao ca room including sender
 // - joined (=> id) thong bao cho client truc tiep
-// - ready (=> in room) thong bao cho ca room
+// - ready (=> in room) thong bao cho ca room including sender
 // - full
 // - ipaddr

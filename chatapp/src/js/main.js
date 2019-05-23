@@ -4,12 +4,14 @@ var isChannelReady = false;
 var isInitiator = false;
 var isStarted = false;
 var localStream;
-var pc;
 var remoteStream;
 
-var sendChannel;
-var receiveChannel;
+// var sendChannel;
+// var receiveChannel;
 var socket;
+
+var peers = {};
+var joiningPeer;
 
 var pcConfig = {
   'iceServers': [{
@@ -48,6 +50,8 @@ var welcomeScreen = document.querySelector('.welcome-screen');
 var enterRoomButton = document.querySelector('button#enter-room');
 var roomInput = document.querySelector('input#room');
 var nameInput = document.querySelector('input#name');
+
+var videoList = document.querySelector('.video-list');
 
 var room = 'Ohmnilabs';
 var name = 'Anonymous';
@@ -96,8 +100,8 @@ function runApp() {
     console.log('Attempted to create or  join room', room);
   }
 
-  socket.on('created', function (room) {
-    console.log('Created room ' + room);
+  socket.on('created', function (room, id) {
+    console.log('Created room ' + room + ' ' + id);
     setStatus('Waiting for people to join...')
     isInitiator = true;
   });
@@ -106,11 +110,14 @@ function runApp() {
     console.log('Room ' + room + ' is full');
   });
 
-  socket.on('join', function (room) {
-    console.log('Another peer made a request to join room ' + room);
-    console.log('This peer is the initiator of room ' + room + '!');
+  socket.on('join', function (msg) {
+    console.log('Another peer with id=' + msg.id + ' made a request to join room ' + msg.room);
+    console.log('This peer is the initiator of room ' + msg.room + '!');
     setStatus('Someone is joining...');
+    isInitiator = true;
     isChannelReady = true;
+    peers[msg.id] = {pc: null, sendChannel: null, receiveChannel: null}
+    joiningPeer = msg.id;
   });
 
   socket.on('joined', function (room) {
@@ -119,24 +126,27 @@ function runApp() {
   });
 
   // This client receives a message
-  socket.on('message', function (message) {
-    console.log('Client received message:', message);
+  socket.on('message', function (msg) {
+    var message = msg.message;
+    console.log('Client received message:', msg);
     if (message === 'got user media') {
-      maybeStart();
+      maybeStart(msg.id);
     } else if (message.type === 'offer') {
       console.log('Process offer');
-      if (!isInitiator && !isStarted) {
-        maybeStart();
+      if (!isInitiator) {
+        joiningPeer = msg.id;
+        peers[msg.id] = {pc: null, sendChannel: null, receiveChannel: null}
+        maybeStart(msg.id);
       }
-      pc.setRemoteDescription(new RTCSessionDescription(message));
-      pc.ondatachannel = receiveChannelCallback;
-      doAnswer();
+      peers[msg.id].pc.setRemoteDescription(new RTCSessionDescription(message));
+      peers[msg.id].pc.ondatachannel = receiveChannelCallback;
+      doAnswer(msg.id);
       setStatus('Call started');
       document.querySelector('.hangup-btn').disabled = false;
     } else if (message.type === 'answer' && isStarted) {
       console.log('Process answer');
-      pc.setRemoteDescription(new RTCSessionDescription(message));
-      pc.ondatachannel = receiveChannelCallback;
+      peers[msg.id].pc.setRemoteDescription(new RTCSessionDescription(message));
+      peers[msg.id].pc.ondatachannel = receiveChannelCallback;
       setStatus('Call started');
       document.querySelector('.hangup-btn').disabled = false;
     } else if (message.type === 'candidate' && isStarted) {
@@ -145,7 +155,7 @@ function runApp() {
         sdpMLineIndex: message.label,
         candidate: message.candidate
       });
-      pc.addIceCandidate(candidate);
+      peers[msg.id].pc.addIceCandidate(candidate);
     } else if (message.type === 'bye' && isStarted) {
       handleRemoteHangup();
     }
@@ -167,35 +177,37 @@ function handleLocalMediaStreamError(error) {
   console.log('navigator.getUserMedia error: ', error);
 }
 
-function maybeStart() {
+function maybeStart(id) {
   console.log('>>>>>>> maybeStart() ', isStarted, localStream, isChannelReady);
-  if (!isStarted && typeof localStream !== 'undefined' && isChannelReady) {
+  if (typeof localStream !== 'undefined' && isChannelReady) {
     console.log('>>>>>> creating peer connection');
-    createPeerConnection();
-    pc.addStream(localStream);
+    createPeerConnection(id);
+    peers[id].pc.addStream(localStream);
     isStarted = true;
     console.log('isInitiator', isInitiator);
     if (isInitiator) {
-      doCall();
+      doCall(id);
     }
   }
 }
 
 /////////////////////////////////////////////////////////
 
-function createPeerConnection() {
+function createPeerConnection(id) {
   try {
-    pc = new RTCPeerConnection(pcConfig);
+    var pc = new RTCPeerConnection(pcConfig);
     pc.onicecandidate = handleIceCandidate;
     pc.onaddstream = handleRemoteStreamAdded;
     pc.onremovestream = handleRemoteStreamRemoved;
     console.log('Created RTCPeerConnnection');
-    sendChannel = pc.createDataChannel('sendDataChannel');
+    var sendChannel = pc.createDataChannel('sendDataChannel');
     console.log('Created send data channel');
 
     sendChannel.onopen = onSendChannelStateChange;
     sendChannel.onmessage = onReceiveMessageCallback;
     sendChannel.onclose = onSendChannelStateChange;
+    peers[id].pc = pc,
+    peers[id].sendChannel = sendChannel;
   } catch (e) {
     console.log('Failed to create PeerConnection, exception: ' + e.message);
     alert('Cannot create RTCPeerConnection object.');
@@ -218,24 +230,32 @@ function handleIceCandidate(event) {
 }
 
 function handleRemoteStreamAdded(event) {
-  console.log('Remote stream added.');
   remoteStream = event.stream;
-  remoteVideo.srcObject = remoteStream;
+  if(Object.keys(peers).length < 2){
+    console.log('Remote stream added.');
+    remoteVideo.srcObject = remoteStream;
+  }else{
+    var video = document.createElement('video');
+    video.autoplay = true;
+    video.className = "local-video";
+    video.srcObject = remoteStream;
+    videoList.appendChild(video);
+  }
 }
 
 function handleRemoteStreamRemoved(event) {
   console.log('Remote stream removed. Event: ', event);
 }
 
-function doCall() {
+function doCall(id) {
   console.log('Sending offer to peer');
-  pc.createOffer(setLocalAndSendMessage, handleCreateOfferError);
+  peers[id].pc.createOffer(setLocalAndSendMessage, handleCreateOfferError);
 }
 
 function setLocalAndSendMessage(sessionDescription) {
-  pc.setLocalDescription(sessionDescription);
+  peers[joiningPeer].pc.setLocalDescription(sessionDescription);
   console.log('setLocalAndSendMessage sending message', sessionDescription);
-  sendMessage(sessionDescription);
+  sendMessage({message: sessionDescription, peerId: joiningPeer});
 }
 
 function onCreateSessionDescriptionError(error) {
@@ -246,9 +266,9 @@ function handleCreateOfferError(event) {
   console.log('createOffer() error: ', event);
 }
 
-function doAnswer() {
+function doAnswer(id) {
   console.log('Sending answer to peer.');
-  pc.createAnswer().then(
+  peers[id].pc.createAnswer().then(
     setLocalAndSendMessage,
     onCreateSessionDescriptionError
   );
@@ -269,23 +289,25 @@ function handleRemoteHangup() {
 
 function stop() {
   isStarted = false;
-  pc.close();
-  pc = null;
+  var peer;
+  for(peer in peers){
+    peers[peer].pc.close();
+  }
   document.querySelector('.hangup-btn').disabled = true;
   setStatus('Call ended');
 }
 
 function onSendChannelStateChange() {
-  var readyState = sendChannel.readyState;
-  console.log('Send channel state is: ' + readyState);
-  if (readyState === 'open') {
-    dataChannelSend.disabled = false;
-    dataChannelSend.focus();
-    sendButton.disabled = false;
-  } else {
-    dataChannelSend.disabled = true;
-    sendButton.disabled = true;
-  }
+  //var readyState = sendChannel.readyState;
+  //console.log('Send channel state is: ' + readyState);
+  // if (readyState === 'open') {
+  //   dataChannelSend.disabled = false;
+  //   dataChannelSend.focus();
+  //   sendButton.disabled = false;
+  // } else {
+  //   dataChannelSend.disabled = true;
+  //   sendButton.disabled = true;
+  // }
 }
 
 function sendData() {
@@ -294,7 +316,11 @@ function sendData() {
     name: name,
     message: data
   };
-  sendChannel.send(JSON.stringify(msg));
+  var peer;
+  for(peer in peers){
+    peers[peer].sendChannel.send(JSON.stringify(msg));
+  }
+
   addChatMessage(msg);
   dataChannelSend.value = '';
   dataChannelSend.focus();
@@ -303,10 +329,11 @@ function sendData() {
 
 function receiveChannelCallback(event) {
   console.log('Receive Channel Callback');
-  receiveChannel = event.channel;
+  var receiveChannel = event.channel;
   receiveChannel.onmessage = onReceiveMessageCallback;
   receiveChannel.onopen = onReceiveChannelStateChange;
   receiveChannel.onclose = onReceiveChannelStateChange;
+  peers[joiningPeer].receiveChannel = receiveChannel;
 }
 
 function onReceiveMessageCallback(event) {
@@ -316,8 +343,8 @@ function onReceiveMessageCallback(event) {
 }
 
 function onReceiveChannelStateChange() {
-  var readyState = pc.readyState;
-  console.log('Receive channel state is: ' + readyState);
+  // var readyState = pc.readyState;
+  // console.log('Receive channel state is: ' + readyState);
 }
 
 function addChatMessage(data) {
