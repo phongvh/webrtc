@@ -13,9 +13,7 @@ var socket;
 var peers = {};
 
 var pcConfig = {
-  'iceServers': [{
-    'urls': 'stun:stun.l.google.com:19302'
-  }]
+  'iceServers': [{"url":"stun:stun.l.google.com:19302"},{"url":"turn:turn-uswest.ohmnilabs.com:5349?transport=udp","username":"turn-ramen","credential":"H7D0AArXju9d"},{"url":"turn:turn-uswest.ohmnilabs.com:5349?transport=tcp","username":"turn-ramen","credential":"H7D0AArXju9d"},{"url":"turn:turn-useast.ohmnilabs.com:5349?transport=udp","username":"turn-ramen","credential":"H7D0AArXju9d"},{"url":"turn:turn-useast.ohmnilabs.com:5349?transport=tcp","username":"turn-ramen","credential":"H7D0AArXju9d"},{"url":"turn:turn-tokyo.ohmnilabs.com:5349?transport=udp","username":"turn-ramen","credential":"H7D0AArXju9d"},{"url":"turn:turn-tokyo.ohmnilabs.com:5349?transport=tcp","username":"turn-ramen","credential":"H7D0AArXju9d"},{"url":"turn:turn-sydney.ohmnilabs.com:5349?transport=udp","username":"turn-ramen","credential":"H7D0AArXju9d"},{"url":"turn:turn-sydney.ohmnilabs.com:5349?transport=tcp","username":"turn-ramen","credential":"H7D0AArXju9d"},{"url":"turn:turn-frankfurt.ohmnilabs.com:5349?transport=udp","username":"turn-ramen","credential":"H7D0AArXju9d"},{"url":"turn:turn-frankfurt.ohmnilabs.com:5349?transport=tcp","username":"turn-ramen","credential":"H7D0AArXju9d"}]
 };
 
 // Set up audio and video regardless of what devices are present.
@@ -76,9 +74,6 @@ function runApp() {
 
   hangupButton.onclick = hangup;
   sendButton.onclick = sendData;
-
-  // navigator.mediaDevices.getUserMedia({video: true, audio: false})
-  //   .then(stream => { localVideo.srcObject = stream; localVideo.onclick = () => remoteVideo.srcObject = stream}).catch(handleLocalMediaStreamError);
 
   // Initializes media stream.
   navigator.mediaDevices.getUserMedia(mediaStreamConstraints)
@@ -183,11 +178,6 @@ function runApp() {
 // Handles success by adding the MediaStream to the video element.
 function gotLocalMediaStream(mediaStream) {
   localStream = mediaStream;
-  let audioTracks = localStream.getAudioTracks();
-  if (audioTracks.length) {
-    var audioTrack = audioTracks[0];
-    console.log(audioTrack.getSettings())
-  }
   localVideo.srcObject = mediaStream;
   localVideo.onclick = function () {
     //localVideo.className = "selected-video";
@@ -210,7 +200,7 @@ function maybeStart(id) {
   if (typeof localStream !== 'undefined' && isChannelReady) {
     console.log('>>>>>> creating peer connection');
     createPeerConnection(id);
-    localStream.getTracks().forEach(track => peers[id].pc.addTrack(track, localStream));
+    peers[id].pc.addStream(localStream);
     isStarted = true;
     console.log('isInitiator', isInitiator);
     if (isInitiator) {
@@ -225,11 +215,11 @@ function createPeerConnection(id) {
   try {
     var pc = new RTCPeerConnection(pcConfig);
     pc.onicecandidate = handleIceCandidate;
-    pc.ontrack = function (event) {
+    pc.onaddstream = function (event) {
       // remoteVideo.id = 'stream-'+id;
-      remoteStream = event.streams[0];
+      remoteStream = event.stream;
       // if(!remoteVideo.srcObject){
-        console.log('Remote stream added.', remoteStream);
+        console.log('Remote stream added.');
         remoteVideo.srcObject = remoteStream;
       //}else{
         var video = document.createElement('video');
@@ -348,8 +338,7 @@ function stop() {
   isStarted = false;
   var peer;
   for(peer in peers){
-    if(peers[peer])
-      peers[peer].pc.close();
+    peers[peer].pc.close();
   }
   document.querySelector('.hangup-btn').disabled = true;
   setStatus('Call ended');

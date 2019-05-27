@@ -82,6 +82,7 @@ body {
   max-width: 100%;
   width: 240px;
   border: 1px solid #ccc;
+  cursor: pointer;
 }
 
 .right-section {

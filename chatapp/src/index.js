@@ -34,15 +34,39 @@ io.sockets.on('connection', function (socket) {
     console.log.apply(console, array);
   }
 
-  socket.on('message', function (message) {
+  socket.on('message', function (msg) {
+    console.log(msg);
+    if(!msg.room) return console.error("Unknown room!");
+
+    var clientsInRoom = io.sockets.adapter.rooms[msg.room];
+    // console.log(io.sockets.adapter.rooms);
+    var numClients = clientsInRoom ? Object.keys(clientsInRoom.sockets).length : 0;
+
+    var message = msg.message;
     log('Receive message: ', message);
     // for a real app, would be room-only (not broadcast)
     if(message.peerId) {
       socket.to(message.peerId).emit('message', {message: message.message, id: socket.id});
     }else {
-      socket.broadcast.emit('message', {message: message, id: socket.id});
+      socket.to(msg.room).emit('message', {message: message, id: socket.id});
     }
-    if(message.type === 'bye') {
+    if(message === 'hangup') {
+      console.log('received hangup');
+      io.sockets.sockets[socket.id].leave(msg.room);
+      if(numClients <= 2){
+        io.sockets.in(message.room).clients(function (error, clients) {
+          if (clients.length > 0) {
+            console.log('clients in the room: \n');
+            console.log(clients);
+            clients.forEach(function (socket_id) {
+              io.sockets.sockets[socket_id].leave(message.room);
+            });
+          }
+        });
+        socket.to(msg.room).emit('endcall');
+      }
+    };
+    if(message === 'bye') {
       console.log('received bye');
       io.sockets.in(message.room).clients(function (error, clients) {
         if (clients.length > 0) {
